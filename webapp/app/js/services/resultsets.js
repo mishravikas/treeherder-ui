@@ -5,9 +5,10 @@
 'use strict';
 
 
-treeherder.factory('thResultSets', [
-    '$rootScope', '$http', '$location', '$q', 'thUrl', 'thEvents', 'thServiceDomain', 'ThLog', 'thNotify',
-    function($rootScope, $http, $location, $q, thUrl, thEvents, thServiceDomain, ThLog, thNotify) {
+treeherder.factory('thResultSets', ['$rootScope', '$http', '$location', '$q', 'thUrl',
+                                    'thEvents', 'thServiceDomain', 'ThLog', 'thNotify','ThJobModel',
+    function($rootScope, $http, $location, $q, thUrl,
+            thEvents, thServiceDomain, ThLog, thNotify, ThJobModel) {
 
     var getJobObj = function(job, jobPropertyNames){
         //Map the job property names to their corresponding
@@ -20,35 +21,45 @@ treeherder.factory('thResultSets', [
         return jobObj;
     };
 
-    // Convert jobs value array into into an associative array
-    // with property names
-    var resultSetResponseTransformer = function(data, headersGetter){
-
-        var responseData = angular.fromJson(data);
-        var r = 0;
-        for(; r<responseData.results.length; r++){
-
-            if(responseData.results[r].platforms === undefined){
-                continue;
+    // Convert a flat list of jobs into a structure grouped by
+    // platform and job_group. this is mainly to keep compatibility
+    // with the previous data structure returned by the api
+    var groupJobByPlatform = function(jobList){
+        var aggregatedJobs = {platforms:[]}
+        if(jobList.length == 0){return aggregatedJobs;}
+        aggregatedJobs.id = jobList[0].result_set_id;
+        
+        for(var i=0; i<jobList.length; i++){
+            // search for the right platform
+            var job = jobList[i];
+            var platform = _.find(aggregatedJobs.platforms, function(platform){
+                return job.build_platform == platform.name &&
+                 job.platform_option == platform.option;
+            })
+            if(_.isUndefined(platform)){
+                platform = {
+                    name: job.build_platform,
+                    option: job.platform_option,
+                    groups: []
+                };
+                aggregatedJobs.platforms.push(platform);
             }
-
-            var p = 0;
-            for(; p < responseData.results[r].platforms.length; p++){
-                var g = 0;
-                for(; g < responseData.results[r].platforms[p].groups.length; g++){
-                    var j = 0;
-                    for(; j < responseData.results[r].platforms[p].groups[g].jobs.length; j++){
-
-                        responseData.results[r].platforms[p].groups[g].jobs[j] = getJobObj(
-                                responseData.results[r].platforms[p].groups[g].jobs[j],
-                                responseData.job_property_names
-                            );
-                    }
-                }
+            // search for the right group
+            var group = _.find(platform.groups, function(group){
+                return job.job_group_name == group.name &&
+                job.job_group_symbol == group.symbol;
+            })
+            if(_.isUndefined(group)){
+                group = {
+                    name: job.job_group_name,
+                    symbol: job.job_group_symbol,
+                    jobs: []
+                };
+                platform.groups.push(group);
             }
+            group.jobs.push(job);
         }
-
-        return responseData;
+        return aggregatedJobs;
     };
 
     var $log = new ThLog("thResultSets");
@@ -133,58 +144,37 @@ treeherder.factory('thResultSets', [
                 thUrl.getProjectUrl("/resultset/", repoName),
                 {
                     params: params,
-                    transformResponse:resultSetResponseTransformer
+                    // transformResponse:resultSetResponseTransformer
                 }
             );
         },
         get: function(uri) {
             return $http.get(thServiceDomain + uri, {params: {format: "json"}});
         },
-        getResultSetJobs: function(resultSets, repoName, exclusion_state){
-
-            var uri = '1/get_resultset_jobs/';
-            var fullUrl = thUrl.getProjectUrl("/resultset/", repoName) + uri;
+        getResultSetJobs: function(resultSets, repoName, exclusionProfile){
 
             _.each(
                 resultSets.results,
                 function(rs, index){
                     var params = {
-                        format: "json",
-                        result_set_ids:rs.id
+                        result_set_id:rs.id,
+                        full: "true",
+                        count: 5000
                     };
-                    if (exclusion_state) {
-                        params.exclusion_state = exclusion_state;
+                    if (exclusionProfile) {
+                        params.exclusionProfile = exclusionProfile;
                     }
-
-                    return $http.get(
-                        fullUrl, {
-                            params: params,
-                            transformResponse:resultSetResponseTransformer
-                        }
-                    ).then( function(response){
-                        if(response.status === 200){
-
-                            if(response.data.results.length > 0){
-
-                                $rootScope.$emit(
-                                    thEvents.mapResultSetJobs,
-                                    repoName,
-                                    response.data.results[0]
-                                    );
-                            }
-
-                        }else{
-                            // Send notification with response.status to
-                            // UI here
-                            thNotify.send(
-                                "Error retrieving job data! response status " + response.status,
-                                "danger",
-                                true);
-                        }
-                }); //Close then
-
-            }); //Close each
-
+                    return ThJobModel.get_list(repoName, params).
+                    then(function(jobList){
+                        return groupJobByPlatform(jobList);
+                    }).
+                    then(function(response){
+                        $rootScope.$emit(thEvents.mapResultSetJobs,
+                            repoName, response
+                        );
+                    });
+                }
+            );
         }, //Close getResultSetJobs
         cancelAll: function(resultset_id, repoName) {
             var uri = resultset_id + '/cancel_all/';
