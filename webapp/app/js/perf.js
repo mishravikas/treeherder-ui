@@ -163,6 +163,7 @@ perf.controller('PerfCtrl', [ '$state', '$stateParams', '$scope', '$rootScope', 
     Mousetrap.bind('escape', function() {
       $scope.ttLocked = false;
       $scope.hideTooltip();
+      $scope.plot.unhighlight();
     });
 
     function plotGraph() {
@@ -263,6 +264,35 @@ perf.controller('PerfCtrl', [ '$state', '$stateParams', '$scope', '$rootScope', 
       var seriesToToggle = _.find($scope.seriesList, function(series) { return series.signature == signature });
       seriesToToggle.visibility = !seriesToToggle.visibility;
       $scope.reload();
+    }
+
+    $scope.findRevision = function(){
+      var rev = $scope.higlightRevision;
+      if (rev.length == 12) {
+        var plotdata = $scope.plot.getData();
+        var graphx = $scope.plot.offset().left;
+        var graphy = $scope.plot.offset().top;
+        plotdata.forEach(function(series, i) {
+          if (series.points.show) {
+            var url = thServiceDomain + "/api/project/" + series.thSeries.projectName + "/resultset/?format=json&revision=" + rev + "&with_jobs=false";
+            $http.get(url).then(function(response) {
+              if (response.data.results.length > 0) {
+                var result_set_id = response.data.results[0].id;
+                var j = series.resultSetData.indexOf(result_set_id);
+                console.log(graphx + series.xaxis.p2c(series.data[j][0]), graphy + series.yaxis.p2c(series.data[j][1]),series.data[j][1])
+                var item = {};
+                item['dataIndex'] = j;
+                item['datapoint'] = series.data;
+                item['series'] = series;
+                $scope.updateTooltip(item);
+                $scope.showTooltip(graphx + series.xaxis.p2c(series.data[j][0]), graphy + series.yaxis.p2c(series.data[j][1]))
+              }
+            });
+          }
+        });
+      } else {
+          $scope.plot.unhighlight();
+      }
     }
 
     var optionCollectionMap = {};

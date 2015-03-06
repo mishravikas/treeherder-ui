@@ -35,6 +35,7 @@
   <div id="graphs">
     <select ng-model="myTimerange" ng-options="timerange.text for timerange in timeranges track by timerange.value" ng-change="timeRangeChanged()">
     </select>
+    Highlight Revision:<input type="text" ng-change="findRevision()" placeholder="Highlight Revision" ng-model="higlightRevision">
     <hr/>
     <div id="graph"></div>
   </div>
